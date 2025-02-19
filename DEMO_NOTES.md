@@ -1,61 +1,61 @@
-# Demo Notes
+# Notas de demostración
 
-Notes, tips, and hints for using the various Veracode scan types with this application.
+Notas, consejos y sugerencias para utilizar los distintos tipos de escaneo Veracode con esta aplicación.
 
-Also see the `docs/flaws` folder for in-depth explanations of the various exploits exposed in this application.
+Consulte también la carpeta `docs/flaws` para obtener explicaciones detalladas de los diversos exploits expuestos en esta aplicación.
 
-## Static scanning
+## Escaneo estático
 
-Build the app:
+Construye la aplicación:
 
-	cd app
-	mvn clean package
+aplicación cd
+paquete limpio mvn
 
-The `app/target/verademo.war` file is the built app.  This is the file to be used for scanning.  Either upload this file to the Veracode platform for a Policy/Sandbox scan, or use it with the Veracode Pipeline scan.
+El archivo `app/target/verademo.war` es la aplicación creada.  Este es el archivo que se utilizará para el escaneo.  Cargue este archivo en la plataforma Veracode para un escaneo de Política/Sandbox o úselo con el escaneo de Veracode Pipeline.
 
-## SCA scanning
+## Escaneo SCA
 
-### Upload/Scan
+### Cargar/Escanear
 
-This will just happen as part of the Policy or Sandbox scan.
+Esto simplemente sucederá como parte del escaneo de Política o Sandbox.
 
-### Agent-based scan
+### Escaneo basado en agentes
 
-Use either the command-line version of the SCA agent (follow the install and config instructions in the Veracode [docs center](https://docs.veracode.com/r/c_sc_what_is) ) or the IDE plugin to initiate an SCA scan.
+Utilice la versión de línea de comandos del agente SCA (siga las instrucciones de instalación y configuración en Veracode [docs center] (https://docs.veracode.com/r/c_sc_what_is) ) o el complemento IDE para iniciar un escaneo SCA.
 
-### Vulnerable Methods
+### Métodos vulnerables
 
-The Veracode agent-based SCA scan can also find [vulnerable methods](https://docs.veracode.com/r/Finding_and_Fixing_Vulnerabilities#fixing-vulnerable-methods).  In this app, there is a vulnerable version of the bcrypt library called from both the `User` and `UserController` classes.
+El escaneo SCA basado en agentes Veracode también puede encontrar [métodos vulnerables] (https://docs.veracode.com/r/Finding_and_Fixing_Vulnerabilities#fixing-vulnerable-methods). En esta aplicación, hay una versión vulnerable de la biblioteca bcrypt llamada desde las clases `User` y `UserController”.
 
-### SBOM generation
+### Generación SBOM
 
-SBOM generation for the application is supported after an SCA scan ([link](https://docs.veracode.com/r/Generating_a_Software_Bill_of_Materials_SBOM_for_Upload_Scans)) 
+La generación de SBOM para la aplicación es compatible después de un escaneo SCA ([enlace](https://docs.veracode.com/r/Generating_a_Software_Bill_of_Materials_SBOM_for_Upload_Scans)) 
 
-SBOM generation for the Docker container is supported by the Container/CLI scanner ([link](https://docs.veracode.com/r/veracode_sbom)).
+La generación de SBOM para el contenedor Docker es compatible con el escáner Container/CLI ([enlace](https://docs.veracode.com/r/veracode_sbom)).
 
-## Veracode Fix
+## Corrección de Veracode
 
-This application has flaws that can be fixed with [Veracode Fix](https://docs.veracode.com/r/veracode_fix).  For an example of one:
+Esta aplicación tiene fallas que se pueden solucionar con [Veracode Fix](https://docs.veracode.com/r/veracode_fix). Para ver un ejemplo de una:
 
-### Build the app
+### Construye la aplicación
 
-	cd app
-	mvn clean package
+aplicación cd
+paquete limpio mvn
 
-### Run the Veracode Pipeline scanner
+### Ejecute el escáner Veracode Pipeline
 
-	java -jar ${path-to-pipeline-scanner}/pipeline-scan.jar -f target/verademo.war -esd true 
+java -jar ${ruta-a-pipeline-scanner}/pipeline-scan.jar -f target/verademo.war -esd true 
 
-### Run Veracode Fix
+### Ejecute Veracode Fix
 
-	veracode fix src/main/java/com/veracode/verademo/controller/UserController.java
+veracode fix src/main/java/com/veracode/verademo/controller/UserController.java
 
-The first flaw is an SQL Injection around line 170 that can be Fixed.
+El primer defecto es una inyección SQL alrededor de la línea 170 que se puede solucionar.
 
-To verify the fix re-build the app and re-run the Pipeline scanner. 
+Para verificar la solución, reconstruya la aplicación y vuelva a ejecutar el escáner Pipeline. 
 
-## Container scan
+## Escaneo de contenedores
 
-From the root of the project run the Veracode container scanner:
+Desde la raíz del proyecto ejecute el escáner de contenedores Veracode:
 
-	veracode scan --type directory --source . --output container_results.json	
+veracode escaneo --tipo directorio --fuente. --salida contenedor_resultados.json
