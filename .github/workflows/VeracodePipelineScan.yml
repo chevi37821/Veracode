@@ -2,7 +2,7 @@ name: Veracode Pipeline Scan
 
 on:
   workflow_call:
-
+  
 jobs:
   PipelineScan:
     runs-on: ubuntu-latest
