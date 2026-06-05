@@ -90,7 +90,7 @@ jobs:
       - name: Veracode Upload and Scan
         uses: veracode/veracode-uploadandscan-action@master  # Versión estable disponible
         with:
-          appname: 'Verademo-GitHub'        # Nombre del perfil en Veracode Platform
+          appname: 'Verademo-GitHub-new'        # Nombre del perfil en Veracode Platform
                                             # Si no existe, se crea automáticamente
           createprofile: true               # true = crear perfil si no existe
           filepath: '*.war'                 # Ruta del artefacto a escanear
