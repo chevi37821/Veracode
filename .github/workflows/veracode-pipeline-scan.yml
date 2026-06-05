@@ -95,18 +95,20 @@ jobs:
           distribution: 'temurin'
 
       # Paso 4: Ejecuta el Pipeline Scan de Veracode
-      # Genera results.json y filtered_results.json
-      # --esd true: requerido para que Veracode Fix
-      # pueda leer los resultados correctamente
+      # --json_output_file: guarda todos los findings
+      # --filtered_json_output_file: guarda solo los que violan la política
+      # || true: permite continuar aunque haya findings bloqueantes
       - name: Veracode Pipeline Scan
         env:
-          VID: ${{ secrets.VID }}
-          VKEY: ${{ secrets.VKEY }}
+          VID: ${{ secrets.VID }}     # API ID de Veracode
+          VKEY: ${{ secrets.VKEY }}   # API Secret Key de Veracode
         run: |
           echo '[INFO] Descargando Pipeline Scanner...'
           curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
           unzip pipeline-scan-LATEST.zip
 
+          # Detecta el nombre del .war dinámicamente
+          # Esto hace el YAML reutilizable en cualquier proyecto Java
           WAR_FILE=$(ls *.war)
           echo "[INFO] Artefacto a escanear: $WAR_FILE"
 
@@ -124,15 +126,27 @@ jobs:
           echo '[INFO] Verificando archivos generados...'
           ls -la *.json || echo '[WARN] No se generaron archivos JSON'
 
-     # Paso 5: Guarda los resultados como artefacto descargable
+          # Si filtered_results.json no existe, copiar results.json
+          # La action veracode-fix busca filtered_results.json internamente
+          if [ ! -f filtered_results.json ]; then
+            echo '[INFO] Copiando results.json como filtered_results.json...'
+            cp results.json filtered_results.json
+          fi
+
+          echo '[INFO] Pipeline Scan completado.'
+
+      # Paso 5: Guarda ambos archivos de resultados como artefacto
       # if: always() garantiza que se guarden aunque el scan falle
       # results.json: todos los findings encontrados
+      # filtered_results.json: solo los que violan la política
       - name: Guardar resultados del scan
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: veracode-scan-results
-          path: results.json          # Solo results.json — más confiable
+          path: |
+            results.json
+            filtered_results.json
 
   # ══════════════════════════════════════════
   # JOB 3: VERACODE FIX
@@ -154,26 +168,37 @@ jobs:
         uses: actions/checkout@v4
 
       # Paso 2: Descarga los resultados del scan
-      # filtered_results.json contiene solo los findings
-      # que violan la política — son los que Fix va a corregir
+      # Incluye results.json y filtered_results.json
       - name: Descargar resultados del scan
         uses: actions/download-artifact@v4
         with:
           name: veracode-scan-results
 
-      # Paso 3: Ejecuta Veracode Fix
+      # Paso 3: Verificar que los archivos existen
+      # antes de pasárselos a Veracode Fix
+      - name: Verificar archivos de resultados
+        run: |
+          echo '[INFO] Archivos disponibles:'
+          ls -la
+          # Si filtered_results.json no llegó, crear uno desde results.json
+          if [ ! -f filtered_results.json ]; then
+            echo '[INFO] Creando filtered_results.json desde results.json...'
+            cp results.json filtered_results.json
+          fi
+
+      # Paso 4: Ejecuta Veracode Fix
       # Genera parches de código con IA para cada flaw
-      # y crea un Pull Request automático con los fixes
+      # fixType: batch = un solo PR con todos los fixes juntos
+      # createPR: true = crea PR automático con el código corregido
+      # prComment: true = agrega comentarios en el PR con los fixes
       - name: Veracode Fix
         uses: veracode/veracode-fix@main
         with:
-          vid: ${{ secrets.VID }}
-          vkey: ${{ secrets.VKEY }}
-          token: ${{ secrets.GITHUB_TOKEN }}  # ← cambiar github_token por token
-          inputFile: filtered_results.json
-          fixType: batch
-          files: all
-          prComment: true
-          createPR: true
-          # Eliminar: language (no es un parámetro válido)
-          # Eliminar: github_token (el nombre correcto es token)
+          vid: ${{ secrets.VID }}           # API ID de Veracode
+          vkey: ${{ secrets.VKEY }}         # API Secret Key de Veracode
+          token: ${{ secrets.GITHUB_TOKEN }} # Token de GitHub para crear el PR
+          inputFile: filtered_results.json  # Archivo con los findings a corregir
+          fixType: batch                    # batch: un PR con todos los fixes juntos
+          files: all                        # Analiza todos los archivos con findings
+          prComment: true                   # Agrega comentarios en el PR con los fixes
+          createPR: true                    # Crea un PR automático con los cambios
