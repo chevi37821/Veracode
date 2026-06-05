@@ -100,14 +100,13 @@ jobs:
       # pueda leer los resultados correctamente
       - name: Veracode Pipeline Scan
         env:
-          VID: ${{ secrets.VID }}     # API ID de Veracode
-          VKEY: ${{ secrets.VKEY }}   # API Secret Key de Veracode
+          VID: ${{ secrets.VID }}
+          VKEY: ${{ secrets.VKEY }}
         run: |
           echo '[INFO] Descargando Pipeline Scanner...'
           curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
           unzip pipeline-scan-LATEST.zip
 
-          # Detecta el nombre del .war dinámicamente
           WAR_FILE=$(ls *.war)
           echo "[INFO] Artefacto a escanear: $WAR_FILE"
 
@@ -119,13 +118,11 @@ jobs:
             --project_name "$GITHUB_REPOSITORY" \
             --project_url "https://github.com/$GITHUB_REPOSITORY" \
             --fail_on_severity "Very High, High" \
-            --esd true || true
-            # --esd true: genera el archivo de source details
-            # requerido para que Veracode Fix ubique el código fuente
-            # || true: permite continuar aunque haya findings
-            # para que los jobs siguientes puedan ejecutarse
+            --json_output_file results.json \
+            --filtered_json_output_file filtered_results.json || true
 
-          echo '[INFO] Pipeline Scan completado.'
+          echo '[INFO] Verificando archivos generados...'
+          ls -la *.json || echo '[WARN] No se generaron archivos JSON'
 
       # Paso 5: Guarda los resultados como artefacto descargable
       # if: always() garantiza que se guarden aunque el scan falle
