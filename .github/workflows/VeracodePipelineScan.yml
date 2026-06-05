@@ -1,42 +1,164 @@
+# ============================================================
+# VERACODE PIPELINE SCAN — GitHub Actions
+# Escaneo de seguridad estático (SAST) usando Veracode
+# Detecta vulnerabilidades en el código compilado
+# Bloquea el pipeline si encuentra Very High o High
+# ============================================================
+
 name: Veracode Pipeline Scan
 
+# ─────────────────────────────────────────────
+# TRIGGERS — Cuándo se ejecuta este workflow
+# ─────────────────────────────────────────────
 on:
-  workflow_call:
-  
+  push:
+    branches: [ main, master ]        # Se dispara en cada push o commit
+  pull_request:
+    branches: [ main, master ]        # Se dispara en cada Pull Request
+
+# ─────────────────────────────────────────────
+# PERMISOS — Requeridos por GitHub Actions
+# ─────────────────────────────────────────────
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
-  PipelineScan:
+
+  # ══════════════════════════════════════════
+  # JOB 1: BUILD
+  # Compila el código Java con Maven
+  # y genera el artefacto .war para escanear
+  # ══════════════════════════════════════════
+  build:
     runs-on: ubuntu-latest
+
     steps:
+      # Paso 1: Clona el repositorio en el runner
+      # El runner es una máquina virtual limpia de GitHub
+      - name: Checkout código
+        uses: actions/checkout@v4
 
-        #Gets the artifact
-        - name: Downloading artifact
-          uses: actions/download-artifact@v3
-          with:
-            name: MyBuiltArtifact
+      # Paso 2: Instala Java 11 en el runner
+      # Necesario para compilar con Maven y ejecutar el scanner
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'     # Distribución OpenJDK de Eclipse Adoptium
 
-        # Runs Veracode Pipeline Scan
-        - name: VERACODE SAST - PIPELINE SCAN
-          if: ${{ success() }}
-          env:
-            VID: ${{ SECRETS.VID }}
-            VKEY: ${{ SECRETS.VKEY }}
-            REPO_URL: https://github.com/${{ GITHUB.REPOSITORY }}
-          run: |
-            echo '[INFO] --- Veracode SAST - Pipeline Scan'
-            echo '[INFO] --- Downloading Pipeline Scan (Latest Version)...'
-            curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
-            unzip pipeline-scan-LATEST.zip
-            echo '[INFO] --- Starting Pipeline Scan execution...'
-            java -jar pipeline-scan.jar -vid $VID -vkey $VKEY --file verademo.war --project_name $GITHUB_REPOSITORY --project_url $REPO_URL -so true
-            STATUS=${?}        
-            if [ $STATUS -gt 0 ];
-            then
-              echo '[INFO] --- Pipeline Scan has finished.'
-              echo '[INFO] --- ' $STATUS ' flaws were found.'
-              exit 1 #This exit code makes the pipeline breaks. Remove this line if you need the pipeline continues its execution
-            elif [ $STATUS -lt 0 ];
-            then
-              echo '[INFO] --- Pipeline Scan could not be executed...There are some errors...'
-              echo '[INFO] --- ' $STATUS
-              exit 1 #This exit code makes the pipeline breaks. Remove this line if you need the pipeline continues its execution
-            fi
+      # Paso 3: Compila el proyecto con Maven
+      # -B: modo batch sin interacción del usuario
+      # clean: limpia compilaciones anteriores
+      # package: compila y empaqueta en .war
+      # -DskipTests: omite pruebas unitarias para ir más rápido
+      - name: Build con Maven
+        working-directory: ./app      # La aplicación está en la carpeta app/
+        run: mvn -B clean package --file pom.xml -DskipTests
+
+      # Paso 4: Verifica los artefactos generados por Maven
+      # Útil para confirmar que el .war se creó correctamente
+      - name: Verificar artefactos generados
+        run: find ./app/target -name "*.war" -o -name "*.jar" | head -20
+
+      # Paso 5: Sube el .war como artefacto de GitHub
+      # Permite que el job veracode-scan lo descargue
+      # *.war: wildcard para no depender del nombre exacto del archivo
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: verademo-artifact
+          path: ./app/target/*.war
+
+  # ══════════════════════════════════════════
+  # JOB 2: VERACODE PIPELINE SCAN
+  # Descarga el .war compilado y lo envía a
+  # Veracode para análisis estático (SAST)
+  # Falla el pipeline si encuentra Very High o High
+  # ══════════════════════════════════════════
+  veracode-scan:
+    needs: build                      # Espera que build termine exitosamente
+                                      # Si build falla, este job no se ejecuta
+    runs-on: ubuntu-latest
+
+    steps:
+      # Paso 1: Descarga el .war subido por el job build
+      # Los jobs corren en runners independientes y limpios
+      # por eso se necesita descargar el artefacto explícitamente
+      - name: Descargar artefacto
+        uses: actions/download-artifact@v4
+        with:
+          name: verademo-artifact     # Debe coincidir con el nombre en upload
+
+      # Paso 2: Lista los archivos descargados
+      # Confirma que el .war llegó correctamente al runner
+      - name: Listar archivos descargados
+        run: ls -la
+
+      # Paso 3: Instala Java 11 en este runner
+      # Necesario para ejecutar el pipeline-scan.jar de Veracode
+      # Cada job corre en un runner limpio — Java debe reinstalarse
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      # Paso 4: Ejecuta el Pipeline Scan de Veracode
+      # Descarga el scanner, detecta el .war y ejecuta el análisis
+      - name: Veracode Pipeline Scan
+        env:
+          VID: ${{ secrets.VID }}     # API ID — leído desde GitHub Secrets
+          VKEY: ${{ secrets.VKEY }}   # API Secret Key — leído desde GitHub Secrets
+        run: |
+          echo '[INFO] Descargando Pipeline Scanner...'
+
+          # Descarga la última versión del Pipeline Scanner de Veracode
+          curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+
+          # Descomprime el ZIP — extrae pipeline-scan.jar
+          unzip pipeline-scan-LATEST.zip
+
+          # Detecta automáticamente el nombre del .war descargado
+          # Hace el YAML reutilizable en cualquier proyecto Java
+          WAR_FILE=$(ls *.war)
+          echo "[INFO] Artefacto a escanear: $WAR_FILE"
+
+          echo '[INFO] Ejecutando Pipeline Scan...'
+
+          # Parámetros del Pipeline Scan:
+          # -vid                : API ID de Veracode (autenticación)
+          # -vkey               : API Secret Key de Veracode (autenticación)
+          # --file              : artefacto .war a escanear
+          # --project_name      : nombre del proyecto para trazabilidad
+          # --project_url       : URL del repo para trazabilidad
+          # --fail_on_severity  : severidades que BLOQUEAN el pipeline
+          #                       Very High y High → exit code > 0 → falla el build
+          #                       Medium, Low, Informational → no bloquean
+          #                       Para modo pasivo: eliminar esta línea
+          java -jar pipeline-scan.jar \
+            -vid "$VID" \
+            -vkey "$VKEY" \
+            --file "$WAR_FILE" \
+            --project_name "$GITHUB_REPOSITORY" \
+            --project_url "https://github.com/$GITHUB_REPOSITORY" \
+            --fail_on_severity "Very High, High"
+
+          echo '[INFO] Pipeline Scan completado.'
+
+          # ─────────────────────────────────────────
+          # CÓDIGOS DE SALIDA (EXIT CODES):
+          # 0  → Sin findings bloqueantes → pipeline continúa ✅
+          # 16 → N findings bloqueantes encontrados → pipeline falla ❌
+          # 1  → Error de configuración o autenticación ❌
+          # ─────────────────────────────────────────
+
+      # Paso 5: Guarda los resultados como artefacto descargable
+      # if: always() garantiza que se guarden aunque el scan falle
+      # Permite descargar el JSON con los findings desde GitHub Actions
+      - name: Guardar resultados del scan
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: veracode-scan-results
+          path: results.json
