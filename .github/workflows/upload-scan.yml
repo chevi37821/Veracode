@@ -11,18 +11,14 @@ name: Veracode Policy Scan Actuali
 
 # ─────────────────────────────────────────────
 # TRIGGERS — Cuándo se ejecuta este workflow
-# Recomendado: nightly build o release
-# No ejecutar en cada push — es un scan pesado
+# Se dispara automáticamente en cada push o commit
+# a las ramas main o master
+# También se puede lanzar manualmente desde Actions
 # ─────────────────────────────────────────────
 on:
-  schedule:
-    - cron: '0 2 * * 1'              # Lunes a las 2AM (nightly semanal)
-  workflow_dispatch:                  # Ejecución manual desde GitHub Actions
-    inputs:
-      app_name:
-        description: 'Nombre de la aplicación en Veracode Platform'
-        required: false
-        default: 'Verademo-GitHub'
+  push:
+    branches: [ main, master ]        # Se dispara en cada push o commit
+  workflow_dispatch:                  # Permite lanzarlo manualmente desde Actions
 
 jobs:
 
@@ -47,11 +43,14 @@ jobs:
           distribution: 'temurin'
 
       # Paso 3: Compila con Maven
+      # working-directory apunta a la carpeta app/
+      # donde está el pom.xml del proyecto
       - name: Build con Maven
         working-directory: ./app
         run: mvn -B clean package --file pom.xml -DskipTests
 
       # Paso 4: Sube el .war como artefacto
+      # para que el job veracode-policy-scan pueda descargarlo
       - name: Subir artefacto
         uses: actions/upload-artifact@v4
         with:
@@ -63,9 +62,11 @@ jobs:
   # Sube el artefacto a Veracode Platform
   # Crea el perfil si no existe (createprofile: true)
   # Ejecuta el Policy Scan completo
+  # Resultados visibles en:
+  # Veracode Platform → My Portfolio → Applications
   # ══════════════════════════════════════════
   veracode-policy-scan:
-    needs: build
+    needs: build                      # Espera que build termine exitosamente
     runs-on: ubuntu-latest
 
     steps:
@@ -82,12 +83,12 @@ jobs:
       # Paso 3: Ejecuta el Policy Scan en Veracode Platform
       # createprofile: true → crea el perfil automáticamente si no existe
       # appname → nombre del perfil en Veracode Platform
-      # version → versión del scan (usa el número de run de GitHub)
+      # version → versión del scan (número de run de GitHub)
       # deleteincompletescan → elimina scans incompletos anteriores
-      # criticality → criticidad del negocio (VeryHigh, High, Medium, Low, VeryLow)
-      #   determina qué política se asigna automáticamente al perfil
+      # criticality → criticidad del negocio: VeryHigh, High, Medium, Low, VeryLow
+      #               determina qué política se asigna automáticamente al perfil
       - name: Veracode Upload and Scan
-        uses: veracode/uploadandscan-action@v1
+        uses: veracode/uploadandscan-action@0.2.6  # Versión estable disponible
         with:
           appname: 'Verademo-GitHub'        # Nombre del perfil en Veracode Platform
                                             # Si no existe, se crea automáticamente
@@ -96,9 +97,7 @@ jobs:
           vid: ${{ secrets.VID }}           # API ID de Veracode
           vkey: ${{ secrets.VKEY }}         # API Secret Key de Veracode
           version: '${{ github.run_number }}'  # Versión del scan
-          criticality: 'High'              # Criticidad: VeryHigh, High, Medium,
-                                           # Low, VeryLow
-                                           # Determina la política asignada al perfil
+          criticality: 'High'              # Criticidad del negocio
           deleteincompletescan: true        # Elimina scans anteriores incompletos
                                            # para evitar conflictos
           # sandboxname: 'GitHub-CI'        # Descomentar para usar sandbox
