@@ -88,7 +88,7 @@ jobs:
       # criticality → criticidad del negocio: VeryHigh, High, Medium, Low, VeryLow
       #               determina qué política se asigna automáticamente al perfil
       - name: Veracode Upload and Scan
-        uses: veracode/uploadandscan-action@0.2.6  # Versión estable disponible
+        uses: veracode/uploadandscan-action@0.2.10  # Versión estable disponible
         with:
           appname: 'Verademo-GitHub'        # Nombre del perfil en Veracode Platform
                                             # Si no existe, se crea automáticamente
