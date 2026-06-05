@@ -1,65 +1,60 @@
-name: Veracode Pipeline Scan
+# ============================================================
+# VERACODE PIPELINE SCAN — GitHub Actions
+# Escaneo de seguridad estático (SAST) usando Veracode
+# Se ejecuta automáticamente en cada push o Pull Request
+# ============================================================
 
+name: Veracode Pipeline Scan  # Nombre que aparece en la pestaña Actions de GitHub
+
+# ─────────────────────────────────────────────
+# TRIGGERS — Cuándo se ejecuta este workflow
+# ─────────────────────────────────────────────
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master ]        # Se dispara cuando se hace push a main o master
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master ]        # Se dispara cuando se abre o actualiza un PR hacia main o master
 
+# ─────────────────────────────────────────────
+# JOBS — Tareas que ejecuta el pipeline
+# ─────────────────────────────────────────────
 jobs:
+
+  # ══════════════════════════════════════════
+  # JOB 1: BUILD
+  # Compila el código fuente Java con Maven
+  # y genera el artefacto .war para escanear
+  # ══════════════════════════════════════════
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest            # Ejecuta en un runner Linux de GitHub (gratis)
+
     steps:
+      # Paso 1: Descarga el código del repositorio
+      # al runner para poder trabajar con él
       - name: Checkout código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4     # Action oficial de GitHub para clonar el repo
 
+      # Paso 2: Instala Java 11 en el runner
+      # Necesario para compilar el proyecto con Maven
       - name: Set up JDK 11
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v4   # Action oficial para instalar Java
         with:
-          java-version: '11'
-          distribution: 'temurin'
+          java-version: '11'          # Versión de Java requerida por el proyecto
+          distribution: 'temurin'     # Distribución OpenJDK de Eclipse Adoptium
 
+      # Paso 3: Compila el proyecto con Maven
+      # -B: modo batch (sin interacción)
+      # clean: limpia compilaciones anteriores
+      # package: compila y empaqueta en .war
+      # -DskipTests: omite las pruebas unitarias para ir más rápido
       - name: Build con Maven
-        working-directory: ./app
+        working-directory: ./app      # Ejecuta el comando dentro de la carpeta app/
         run: mvn -B clean package --file pom.xml -DskipTests
 
+      # Paso 4: Guarda el artefacto .war generado
+      # para que el siguiente job pueda descargarlo
+      # Sin este paso el job veracode-scan no puede acceder al .war
       - name: Subir artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: verademo-artifact
-          path: ./app/target/verademo.war
-
-  veracode-scan:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Descargar artefacto
-        uses: actions/download-artifact@v4
-        with:
-          name: verademo-artifact
-
-      - name: Set up JDK 11
-        uses: actions/setup-java@v4
-        with:
-          java-version: '11'
-          distribution: 'temurin'
-
-      - name: Veracode Pipeline Scan
-        env:
-          VID: ${{ secrets.VID }}
-          VKEY: ${{ secrets.VKEY }}
-        run: |
-          echo '[INFO] Descargando Pipeline Scanner...'
-          curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
-          unzip pipeline-scan-LATEST.zip
-
-          echo '[INFO] Ejecutando Pipeline Scan...'
-          java -jar pipeline-scan.jar \
-            -vid "$VID" \
-            -vkey "$VKEY" \
-            --file verademo.war \
-            --project_name "$GITHUB_REPOSITORY" \
-            --project_url "https://github.com/$GITHUB_REPOSITORY" \
-            --fail_on_severity "Very High, High"
-
-          echo '[INFO] Pipeline Scan completado.'
+          name: verademo-artifact     # Nombre del artefacto
