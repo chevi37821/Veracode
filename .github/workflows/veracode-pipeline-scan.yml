@@ -54,4 +54,133 @@ jobs:
       # Paso 4: Verifica los artefactos generados
       # Útil para confirmar el nombre del .war
       - name: Verificar artefactos generados
-        run: find
+        run: find ./app/target -name "*.war" -o -name "*.jar" | head -20
+
+      # Paso 5: Sube el .war como artefacto
+      # para que los jobs siguientes puedan descargarlo
+      # Usamos *.war para no depender del nombre exacto
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: verademo-artifact
+          path: ./app/target/*.war
+
+  # ══════════════════════════════════════════
+  # JOB 2: VERACODE SCAN
+  # Descarga el .war y lo envía a Veracode
+  # para análisis estático (SAST)
+  # ══════════════════════════════════════════
+  veracode-scan:
+    needs: build                      # Espera que build termine exitosamente
+    runs-on: ubuntu-latest
+
+    steps:
+      # Paso 1: Descarga el .war subido por el job build
+      - name: Descargar artefacto
+        uses: actions/download-artifact@v4
+        with:
+          name: verademo-artifact
+
+      # Paso 2: Lista archivos para confirmar
+      # que el .war llegó correctamente
+      - name: Listar archivos descargados
+        run: ls -la
+
+      # Paso 3: Instala Java 11
+      # Cada job corre en runner limpio — se reinstala Java
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      # Paso 4: Ejecuta el Pipeline Scan de Veracode
+      # Genera results.json y filtered_results.json
+      # --esd true: requerido para que Veracode Fix
+      # pueda leer los resultados correctamente
+      - name: Veracode Pipeline Scan
+        env:
+          VID: ${{ secrets.VID }}     # API ID de Veracode
+          VKEY: ${{ secrets.VKEY }}   # API Secret Key de Veracode
+        run: |
+          echo '[INFO] Descargando Pipeline Scanner...'
+          curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+          unzip pipeline-scan-LATEST.zip
+
+          # Detecta el nombre del .war dinámicamente
+          WAR_FILE=$(ls *.war)
+          echo "[INFO] Artefacto a escanear: $WAR_FILE"
+
+          echo '[INFO] Ejecutando Pipeline Scan...'
+          java -jar pipeline-scan.jar \
+            -vid "$VID" \
+            -vkey "$VKEY" \
+            --file "$WAR_FILE" \
+            --project_name "$GITHUB_REPOSITORY" \
+            --project_url "https://github.com/$GITHUB_REPOSITORY" \
+            --fail_on_severity "Very High, High" \
+            --esd true || true
+            # --esd true: genera el archivo de source details
+            # requerido para que Veracode Fix ubique el código fuente
+            # || true: permite continuar aunque haya findings
+            # para que los jobs siguientes puedan ejecutarse
+
+          echo '[INFO] Pipeline Scan completado.'
+
+      # Paso 5: Guarda los resultados como artefacto descargable
+      # if: always() garantiza que se guarden aunque el scan falle
+      # results.json: todos los findings encontrados
+      # filtered_results.json: solo los que violan la política
+      - name: Guardar resultados del scan
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: veracode-scan-results
+          path: |
+            results.json
+            filtered_results.json
+
+  # ══════════════════════════════════════════
+  # JOB 3: VERACODE FIX
+  # Usa IA para generar fixes automáticos
+  # de los flaws encontrados en el scan
+  # Crea un Pull Request con los cambios
+  # ══════════════════════════════════════════
+  veracode-fix:
+    needs: veracode-scan              # Espera que el scan termine
+    runs-on: ubuntu-latest
+    if: always()                      # Corre aunque el scan haya fallado
+                                      # porque necesitamos los resultados
+
+    steps:
+      # Paso 1: Clona el repositorio
+      # Veracode Fix necesita el código fuente
+      # para aplicar los parches generados por IA
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      # Paso 2: Descarga los resultados del scan
+      # filtered_results.json contiene solo los findings
+      # que violan la política — son los que Fix va a corregir
+      - name: Descargar resultados del scan
+        uses: actions/download-artifact@v4
+        with:
+          name: veracode-scan-results
+
+      # Paso 3: Ejecuta Veracode Fix
+      # Genera parches de código con IA para cada flaw
+      # y crea un Pull Request automático con los fixes
+      - name: Veracode Fix
+        uses: veracode/veracode-fix@v2
+        with:
+          vid: ${{ secrets.VID }}           # API ID de Veracode
+          vkey: ${{ secrets.VKEY }}         # API Secret Key de Veracode
+          inputFile: filtered_results.json  # Archivo con los findings a corregir
+          language: java                    # Lenguaje del código fuente
+          fixType: batch                    # batch: un PR con todos los fixes juntos
+                                            # single: un comentario por cada flaw
+          files: all                        # Analiza todos los archivos con findings
+          prComment: true                   # Agrega comentarios en el PR con los fixes
+          createPR: true                    # Crea un PR automático con los cambios
+          github_token: ${{ secrets.GITHUB_TOKEN }}  # Token automático de GitHub
+                                                      # para crear el PR en el repo
