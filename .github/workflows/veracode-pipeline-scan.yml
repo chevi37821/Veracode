@@ -170,14 +170,13 @@ jobs:
       - name: Veracode Fix
         uses: veracode/veracode-fix@main
         with:
-          vid: ${{ secrets.VID }}           # API ID de Veracode
-          vkey: ${{ secrets.VKEY }}         # API Secret Key de Veracode
-          inputFile: filtered_results.json  # Archivo con los findings a corregir
-          language: java                    # Lenguaje del código fuente
-          fixType: batch                    # batch: un PR con todos los fixes juntos
-                                            # single: un comentario por cada flaw
-          files: all                        # Analiza todos los archivos con findings
-          prComment: true                   # Agrega comentarios en el PR con los fixes
-          createPR: true                    # Crea un PR automático con los cambios
-          github_token: ${{ secrets.GITHUB_TOKEN }}  # Token automático de GitHub
-                                                      # para crear el PR en el repo
+          vid: ${{ secrets.VID }}
+          vkey: ${{ secrets.VKEY }}
+          token: ${{ secrets.GITHUB_TOKEN }}  # ← cambiar github_token por token
+          inputFile: filtered_results.json
+          fixType: batch
+          files: all
+          prComment: true
+          createPR: true
+          # Eliminar: language (no es un parámetro válido)
+          # Eliminar: github_token (el nombre correcto es token)
