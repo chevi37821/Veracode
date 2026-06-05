@@ -1,157 +1,57 @@
 # ============================================================
-# VERACODE PIPELINE SCAN — GitHub Actions
-# Escaneo de seguridad estático (SAST) usando Veracode
-# Se ejecuta automáticamente en cada push o Pull Request
+# VERACODE PIPELINE SCAN + FIX — GitHub Actions
+# Escaneo SAST + guardado de resultados + fixes automáticos con IA
 # ============================================================
 
-name: Veracode Pipeline Scan  # Nombre que aparece en la pestaña Actions de GitHub
+name: Veracode Pipeline Scan
 
 # ─────────────────────────────────────────────
 # TRIGGERS — Cuándo se ejecuta este workflow
 # ─────────────────────────────────────────────
 on:
   push:
-    branches: [ main, master ]        # Se dispara cuando se hace push a main o master
+    branches: [ main, master ]        # Se dispara en push a main o master
   pull_request:
-    branches: [ main, master ]        # Se dispara cuando se abre o actualiza un PR hacia main o master
+    branches: [ main, master ]        # Se dispara en PRs hacia main o master
 
 # ─────────────────────────────────────────────
-# JOBS — Tareas que ejecuta el pipeline
+# PERMISOS — Necesarios para que Veracode Fix
+# pueda crear Pull Requests automáticos
 # ─────────────────────────────────────────────
+permissions:
+  contents: write                     # Permite escribir en el repositorio
+  pull-requests: write                # Permite crear y comentar Pull Requests
+
 jobs:
 
   # ══════════════════════════════════════════
   # JOB 1: BUILD
-  # Compila el código fuente Java con Maven
-  # y genera el artefacto .war para escanear
+  # Compila el código Java con Maven
+  # y genera el artefacto .war
   # ══════════════════════════════════════════
   build:
-    runs-on: ubuntu-latest            # Ejecuta en un runner Linux de GitHub (gratis)
+    runs-on: ubuntu-latest
 
     steps:
-      # Paso 1: Descarga el código del repositorio
-      # al runner para poder trabajar con él
+      # Paso 1: Clona el repositorio en el runner
       - name: Checkout código
-        uses: actions/checkout@v4     # Action oficial de GitHub para clonar el repo
+        uses: actions/checkout@v4
 
       # Paso 2: Instala Java 11 en el runner
-      # Necesario para compilar el proyecto con Maven
-      - name: Set up JDK 11
-        uses: actions/setup-java@v4   # Action oficial para instalar Java
-        with:
-          java-version: '11'          # Versión de Java requerida por el proyecto
-          distribution: 'temurin'     # Distribución OpenJDK de Eclipse Adoptium
-
-      # Paso 3: Compila el proyecto con Maven
-      # -B: modo batch sin interacción del usuario
-      # clean: limpia compilaciones anteriores
-      # package: compila y empaqueta en .war
-      # -DskipTests: omite pruebas unitarias para ir más rápido
-      - name: Build con Maven
-        working-directory: ./app      # Ejecuta el comando dentro de la carpeta app/
-        run: mvn -B clean package --file pom.xml -DskipTests
-
-      # Paso 4: Muestra los archivos generados por Maven
-      # Útil para verificar el nombre exacto del .war
-      # y confirmar que el build generó el artefacto correctamente
-      - name: Verificar artefactos generados
-        run: find ./app/target -name "*.war" -o -name "*.jar" | head -20
-
-      # Paso 5: Guarda el artefacto .war generado
-      # para que el job veracode-scan pueda descargarlo
-      # Usamos *.war (wildcard) para no depender del nombre exacto
-      # ya que cada proyecto puede tener un nombre diferente
-      - name: Subir artefacto
-        uses: actions/upload-artifact@v4
-        with:
-          name: verademo-artifact          # Nombre del artefacto — referenciado en el job siguiente
-          path: ./app/target/*.war         # Wildcard — toma cualquier .war generado por Maven
-
-  # ══════════════════════════════════════════
-  # JOB 2: VERACODE SCAN
-  # Descarga el artefacto compilado y lo envía
-  # a Veracode para análisis estático (SAST)
-  # Espera a que el job build termine exitosamente
-  # ══════════════════════════════════════════
-  veracode-scan:
-    needs: build                      # Espera a que el job build termine antes de ejecutarse
-                                      # Si build falla este job no se ejecuta
-    runs-on: ubuntu-latest            # Cada job corre en un runner limpio e independiente
-
-    steps:
-      # Paso 1: Descarga el artefacto .war
-      # que subió el job build en el paso anterior
-      # El nombre debe coincidir exactamente con el usado en upload-artifact
-      - name: Descargar artefacto
-        uses: actions/download-artifact@v4
-        with:
-          name: verademo-artifact     # Debe coincidir con el nombre en upload-artifact
-
-      # Paso 2: Lista los archivos descargados
-      # para confirmar que el .war llegó correctamente
-      # y ver el nombre exacto que usará el scanner
-      - name: Listar archivos descargados
-        run: ls -la                   # Muestra todos los archivos en el directorio actual
-
-      # Paso 3: Instala Java 11 en este runner
-      # Necesario para ejecutar el pipeline-scan.jar de Veracode
-      # Cada job corre en un runner limpio — Java debe instalarse de nuevo
       - name: Set up JDK 11
         uses: actions/setup-java@v4
         with:
           java-version: '11'
           distribution: 'temurin'
 
-      # Paso 4: Ejecuta el Pipeline Scan de Veracode
-      - name: Veracode Pipeline Scan
-        env:
-          # Credenciales de Veracode — se leen desde los Secrets del repositorio
-          # NUNCA escribir credenciales en texto plano en el código
-          VID: ${{ secrets.VID }}     # API ID generado en Veracode Platform
-          VKEY: ${{ secrets.VKEY }}   # API Secret Key generado en Veracode Platform
+      # Paso 3: Compila el proyecto con Maven
+      # working-directory apunta a la carpeta app/
+      # donde está el pom.xml del proyecto
+      - name: Build con Maven
+        working-directory: ./app
+        run: mvn -B clean package --file pom.xml -DskipTests
 
-        run: |
-          echo '[INFO] Descargando Pipeline Scanner...'
-
-          # Descarga el Pipeline Scanner JAR desde Veracode
-          # Siempre descarga la última versión disponible (LATEST)
-          curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
-
-          # Descomprime el ZIP — extrae pipeline-scan.jar y README.md
-          unzip pipeline-scan-LATEST.zip
-
-          # Detecta automáticamente el nombre del .war descargado
-          # Esto hace el YAML reutilizable en cualquier proyecto Java
-          # sin importar cómo se llame el artefacto generado por Maven
-          WAR_FILE=$(ls *.war)
-          echo "[INFO] Artefacto a escanear: $WAR_FILE"
-
-          echo '[INFO] Ejecutando Pipeline Scan...'
-
-          # Ejecuta el Pipeline Scan con los parámetros:
-          # -vid        : API ID de Veracode (autenticación)
-          # -vkey       : API Secret Key de Veracode (autenticación)
-          # --file      : artefacto .war a escanear (nombre detectado dinámicamente)
-          # --project_name : nombre del proyecto en Veracode para trazabilidad
-          # --project_url  : URL del repo GitHub para trazabilidad en la plataforma
-          # --fail_on_severity: severidades que BLOQUEAN el pipeline
-          #   "Very High" y "High" → exit code > 0 → pipeline falla
-          #   Medium, Low, Informational → no bloquean el pipeline
-          #   Para modo pasivo (sin bloqueo): eliminar esta línea
-          java -jar pipeline-scan.jar \
-            -vid "$VID" \
-            -vkey "$VKEY" \
-            --file "$WAR_FILE" \
-            --project_name "$GITHUB_REPOSITORY" \
-            --project_url "https://github.com/$GITHUB_REPOSITORY" \
-            --fail_on_severity "Very High, High"
-
-          echo '[INFO] Pipeline Scan completado.'
-
-          # ─────────────────────────────────────────
-          # CÓDIGOS DE SALIDA (EXIT CODES):
-          # 0  → Scan exitoso, sin findings bloqueantes
-          # 16 → Scan exitoso, encontró N findings que
-          #       superan el umbral de severidad definido
-          # 1  → Error de configuración o autenticación
-          # ─────────────────────────────────────────
+      # Paso 4: Verifica los artefactos generados
+      # Útil para confirmar el nombre del .war
+      - name: Verificar artefactos generados
+        run: find
