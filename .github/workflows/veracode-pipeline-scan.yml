@@ -171,7 +171,7 @@ jobs:
       # Genera parches de código con IA para cada flaw
       # y crea un Pull Request automático con los fixes
       - name: Veracode Fix
-        uses: veracode/veracode-fix@v2
+        uses: veracode/veracode-fix@v1
         with:
           vid: ${{ secrets.VID }}           # API ID de Veracode
           vkey: ${{ secrets.VKEY }}         # API Secret Key de Veracode
