@@ -124,18 +124,15 @@ jobs:
           echo '[INFO] Verificando archivos generados...'
           ls -la *.json || echo '[WARN] No se generaron archivos JSON'
 
-      # Paso 5: Guarda los resultados como artefacto descargable
+     # Paso 5: Guarda los resultados como artefacto descargable
       # if: always() garantiza que se guarden aunque el scan falle
       # results.json: todos los findings encontrados
-      # filtered_results.json: solo los que violan la política
       - name: Guardar resultados del scan
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: veracode-scan-results
-          path: |
-            results.json
-            filtered_results.json
+          path: results.json          # Solo results.json — más confiable
 
   # ══════════════════════════════════════════
   # JOB 3: VERACODE FIX
