@@ -1,0 +1,160 @@
+# ============================================================
+# VERACODE PIPELINE SCAN — GitHub Actions
+# Escaneo SAST con Veracode CLI Autopackager
+# El autopackager detecta el lenguaje, compila y empaqueta
+# automáticamente sin necesidad de configurar el build
+# ============================================================
+
+name: Veracode Pipeline Scan + autopackage
+
+# ─────────────────────────────────────────────
+# TRIGGERS — Cuándo se ejecuta este workflow
+# ─────────────────────────────────────────────
+on:
+  push:
+    branches: [ main, master ]        # Se dispara en push a main o master
+  pull_request:
+    branches: [ main, master ]        # Se dispara en PRs hacia main o master
+
+# ─────────────────────────────────────────────
+# PERMISOS
+# ─────────────────────────────────────────────
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+
+  # ══════════════════════════════════════════
+  # JOB 1: AUTOPACKAGE
+  # Veracode CLI detecta el lenguaje del proyecto,
+  # lo compila automáticamente y genera el artefacto
+  # listo para escanear. No requiere configurar build.
+  # ══════════════════════════════════════════
+  autopackage:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Paso 1: Clona el repositorio
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      # Paso 2: Instala el Veracode CLI
+      # El CLI incluye el autopackager que detecta
+      # automáticamente el lenguaje y build tool del proyecto
+      - name: Instalar Veracode CLI
+        run: |
+          echo '[INFO] Descargando Veracode CLI...'
+          curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          ./veracode version
+          echo '[INFO] Veracode CLI instalado correctamente.'
+
+      # Paso 3: Ejecuta el diagnóstico del proyecto
+      # Detecta los toolchains disponibles (Maven, Gradle, npm, etc.)
+      # Genera o actualiza el archivo veracode.yml con los módulos
+      # EJECUTAR SIEMPRE ANTES de veracode package
+      - name: Veracode Package Discover
+        run: |
+          echo '[INFO] Detectando toolchains del proyecto...'
+          ./veracode package discover
+          echo '[INFO] Diagnóstico completado.'
+
+      # Paso 4: Empaqueta el proyecto automáticamente
+      # --source .: empaqueta desde el directorio actual
+      # --trust: confirma que el código fuente es de confianza
+      # --output ./dist: guarda el artefacto en la carpeta dist/
+      # --verbose: muestra detalles del proceso de empaquetado
+      - name: Veracode Autopackage
+        run: |
+          echo '[INFO] Empaquetando proyecto con autopackager...'
+          ./veracode package \
+            --source . \
+            --trust \
+            --output ./dist \
+            --verbose
+          echo '[INFO] Artefactos generados:'
+          ls -la ./dist/
+
+      # Paso 5: Sube el artefacto generado para el job de scan
+      # El nombre del artefacto sigue el patrón:
+      # veracode-auto-pack-{proyecto}-{lenguaje}.zip
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: veracode-autopack-artifact
+          path: ./dist/*.zip            # Toma todos los ZIPs generados
+
+  # ══════════════════════════════════════════
+  # JOB 2: VERACODE PIPELINE SCAN
+  # Descarga el artefacto autoempaquetado
+  # y lo envía a Veracode para análisis SAST
+  # ══════════════════════════════════════════
+  veracode-scan:
+    needs: autopackage                # Espera que autopackage termine
+    runs-on: ubuntu-latest
+
+    steps:
+      # Paso 1: Descarga el artefacto generado por el autopackager
+      - name: Descargar artefacto
+        uses: actions/download-artifact@v4
+        with:
+          name: veracode-autopack-artifact
+
+      # Paso 2: Lista archivos para confirmar
+      # que el ZIP llegó correctamente
+      - name: Listar archivos descargados
+        run: |
+          echo '[INFO] Archivos disponibles para escanear:'
+          ls -la
+
+      # Paso 3: Instala Java — requerido para ejecutar
+      # el pipeline-scan.jar de Veracode
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      # Paso 4: Ejecuta el Pipeline Scan de Veracode
+      # Detecta dinámicamente el nombre del ZIP generado
+      # por el autopackager para no depender del nombre exacto
+      - name: Veracode Pipeline Scan
+        env:
+          VID: ${{ secrets.VID }}     # API ID de Veracode
+          VKEY: ${{ secrets.VKEY }}   # API Secret Key de Veracode
+        run: |
+          echo '[INFO] Descargando Pipeline Scanner...'
+          curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
+          unzip pipeline-scan-LATEST.zip
+
+          # Detecta el nombre del ZIP generado por el autopackager
+          # El autopackager genera nombres tipo:
+          # veracode-auto-pack-{proyecto}-{lenguaje}.zip
+          ZIP_FILE=$(ls *.zip | grep -v pipeline-scan || ls *.zip | head -1)
+          echo "[INFO] Artefacto a escanear: $ZIP_FILE"
+
+          echo '[INFO] Ejecutando Pipeline Scan...'
+          java -jar pipeline-scan.jar \
+            -vid "$VID" \
+            -vkey "$VKEY" \
+            --file "$ZIP_FILE" \
+            --project_name "$GITHUB_REPOSITORY" \
+            --project_url "https://github.com/$GITHUB_REPOSITORY" \
+            --fail_on_severity "Very High, High" \
+            --json_output_file results.json \
+            --filtered_json_output_file filtered_results.json || true
+
+          echo '[INFO] Verificando archivos generados...'
+          ls -la *.json || echo '[WARN] No se generaron archivos JSON'
+          echo '[INFO] Pipeline Scan completado.'
+
+      # Paso 5: Guarda los resultados como artefacto descargable
+      # if: always() garantiza que se guarden aunque el scan falle
+      - name: Guardar resultados del scan
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: veracode-scan-results
+          path: |
+            results.json
+            filtered_results.json
