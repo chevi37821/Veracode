@@ -1,0 +1,165 @@
+# ============================================================
+# VERACODE POLICY SCAN — GitHub Actions
+# Sube el artefacto a Veracode Platform y ejecuta un
+# Policy Scan completo. Crea el perfil de aplicación
+# automáticamente si no existe.
+# Usa Veracode CLI Autopackager — detecta el lenguaje,
+# compila y empaqueta automáticamente sin configurar build.
+# Los resultados se visualizan en:
+# Veracode Platform → My Portfolio → Applications
+# ============================================================
+
+name: Veracode Policy Scan Actuali
+
+# ─────────────────────────────────────────────
+# TRIGGERS — Cuándo se ejecuta este workflow
+# ─────────────────────────────────────────────
+on:
+  push:
+    branches: [ main, master ]        # Se dispara en cada push o commit
+  workflow_dispatch:                  # Permite lanzarlo manualmente desde Actions
+
+# ─────────────────────────────────────────────
+# FIX: Permite Node.js 20 en las actions
+# GitHub forzará Node.js 24 desde septiembre 2026
+# ─────────────────────────────────────────────
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
+jobs:
+
+  # ══════════════════════════════════════════
+  # JOB 1: AUTOPACKAGE
+  # Veracode CLI detecta el lenguaje del proyecto
+  # y lo empaqueta automáticamente.
+  # Para Java: ejecuta Maven internamente → genera .war
+  # Para JS/Python/Go: empaqueta directamente
+  # ══════════════════════════════════════════
+  autopackage:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Paso 1: Clona el repositorio
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      # Paso 2: Instala Java 11
+      # Requerido para que el autopackager pueda ejecutar
+      # Maven internamente al detectar un proyecto Java
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      # Paso 3: Instala el Veracode CLI
+      # Incluye el autopackager con soporte para múltiples lenguajes
+      - name: Instalar Veracode CLI
+        run: |
+          echo '[INFO] Descargando Veracode CLI...'
+          curl -fsS https://tools.veracode.com/veracode-cli/install | sh
+          ./veracode version
+          echo '[INFO] Veracode CLI instalado correctamente.'
+
+      # Paso 4: Diagnóstico del proyecto
+      # Detecta toolchains disponibles en el repositorio
+      # SIEMPRE ejecutar antes de veracode package
+      - name: Veracode Package Discover
+        run: |
+          echo '[INFO] Detectando toolchains del proyecto...'
+          ./veracode package discover
+          echo '[INFO] Diagnóstico completado.'
+
+      # Paso 5: Empaqueta el proyecto automáticamente
+      # Para Java genera: verademo.war
+      # Para JS genera: veracode-auto-pack-{proyecto}-js.zip
+      # Para Python genera: veracode-auto-pack-{proyecto}-python.zip
+      - name: Veracode Autopackage
+        run: |
+          echo '[INFO] Empaquetando proyecto...'
+          ./veracode package \
+            --source . \
+            --trust \
+            --output ./dist \
+            --verbose
+          echo '[INFO] Artefactos generados:'
+          ls -la ./dist/
+
+      # Paso 6: Sube los artefactos para el job de policy scan
+      # Incluye el .war de Java y los .zip de otros lenguajes
+      - name: Subir artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          name: verademo-policy-artifact
+          path: |
+            ./dist/verademo.war
+            ./dist/*.zip
+
+  # ══════════════════════════════════════════
+  # JOB 2: VERACODE POLICY SCAN
+  # Descarga el artefacto autoempaquetado
+  # y lo sube a Veracode Platform para Policy Scan
+  # Crea el perfil si no existe (createprofile: true)
+  # Resultados visibles en:
+  # Veracode Platform → My Portfolio → Applications
+  # ══════════════════════════════════════════
+  veracode-policy-scan:
+    needs: autopackage                # Espera que autopackage termine exitosamente
+    runs-on: ubuntu-latest
+
+    steps:
+      # Paso 1: Descarga el artefacto generado por el autopackager
+      - name: Descargar artefacto
+        uses: actions/download-artifact@v4
+        with:
+          name: verademo-policy-artifact
+
+      # Paso 2: Verificar artefactos descargados
+      - name: Listar archivos
+        run: |
+          echo '[INFO] Archivos disponibles:'
+          ls -la
+
+      # Paso 3: Detectar el artefacto principal a escanear
+      # Prioridad 1: .war (Java compilado — cobertura completa)
+      # Prioridad 2: .zip del autopackager (otros lenguajes)
+      - name: Detectar artefacto
+        id: detect
+        run: |
+          if ls *.war 1>/dev/null 2>&1; then
+            SCAN_FILE=$(ls *.war | head -1)
+            echo "[INFO] Artefacto Java WAR detectado: $SCAN_FILE"
+          else
+            SCAN_FILE=$(ls *.zip | head -1)
+            echo "[INFO] Artefacto ZIP detectado: $SCAN_FILE"
+          fi
+
+          if [ -z "$SCAN_FILE" ]; then
+            echo '[ERROR] No se encontró artefacto para escanear'
+            exit 1
+          fi
+
+          echo "SCAN_FILE=$SCAN_FILE" >> $GITHUB_OUTPUT
+          echo "[INFO] Artefacto seleccionado: $SCAN_FILE"
+
+      # Paso 4: Ejecuta el Policy Scan en Veracode Platform
+      # createprofile: true → crea el perfil automáticamente si no existe
+      # appname → nombre del perfil en Veracode Platform
+      # version → versión del scan (número de run de GitHub)
+      # deleteincompletescan → elimina scans incompletos anteriores
+      # criticality → VeryHigh, High, Medium, Low, VeryLow
+      #               determina qué política se asigna al perfil
+      - name: Veracode Upload and Scan
+        uses: veracode/veracode-uploadandscan-action@master
+        with:
+          appname: 'Verademo-GitHub-andreani'  # Nombre del perfil en Veracode Platform
+                                               # Si no existe se crea automáticamente
+          createprofile: true                  # true = crear perfil si no existe
+          filepath: ${{ steps.detect.outputs.SCAN_FILE }}  # Artefacto detectado dinámicamente
+          vid: ${{ secrets.VID }}              # API ID de Veracode
+          vkey: ${{ secrets.VKEY }}            # API Secret Key de Veracode
+          version: '${{ github.run_number }}'  # Versión del scan
+          criticality: 'High'                  # Criticidad del negocio
+          deleteincompletescan: true           # Elimina scans anteriores incompletos
+          # sandboxname: 'GitHub-CI'           # Descomentar para usar sandbox
+          # createsandbox: true                # en lugar del perfil de producción
