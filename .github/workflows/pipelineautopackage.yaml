@@ -1,8 +1,8 @@
 # ============================================================
 # VERACODE PIPELINE SCAN — GitHub Actions
 # Escaneo SAST con Veracode CLI Autopackager
-# Java/Maven: requiere build previo antes del autopackager
-# El autopackager empaqueta correctamente para Veracode
+# El autopackager detecta el lenguaje, compila y empaqueta
+# automáticamente. Para Java ejecuta Maven internamente.
 # ============================================================
 
 name: Veracode Pipeline Scan + autopackage
@@ -12,9 +12,9 @@ name: Veracode Pipeline Scan + autopackage
 # ─────────────────────────────────────────────
 on:
   push:
-    branches: [ main, master ]        # Se dispara en push a main o master
+    branches: [ main, master ]
   pull_request:
-    branches: [ main, master ]        # Se dispara en PRs hacia main o master
+    branches: [ main, master ]
 
 # ─────────────────────────────────────────────
 # PERMISOS
@@ -33,10 +33,11 @@ env:
 jobs:
 
   # ══════════════════════════════════════════
-  # JOB 1: BUILD + AUTOPACKAGE
-  # Para Java/Maven el autopackager necesita
-  # el .war compilado para detectarlo correctamente
-  # Flujo: Maven compila → autopackager empaqueta
+  # JOB 1: AUTOPACKAGE
+  # Veracode CLI detecta el lenguaje del proyecto
+  # y lo empaqueta automáticamente.
+  # Para Java: ejecuta Maven internamente y genera .war
+  # Para JS/Python/Go: empaqueta los archivos directamente
   # ══════════════════════════════════════════
   autopackage:
     runs-on: ubuntu-latest
@@ -47,32 +48,17 @@ jobs:
         uses: actions/checkout@v4
 
       # Paso 2: Instala Java 11
-      # Requerido para compilar con Maven
-      # Java/Maven NO compila solo con el autopackager —
-      # se necesita el .war generado antes de empaquetar
+      # Requerido para que el autopackager pueda ejecutar
+      # Maven internamente al detectar un proyecto Java
       - name: Set up JDK 11
         uses: actions/setup-java@v4
         with:
           java-version: '11'
           distribution: 'temurin'
 
-      # Paso 3: Compila el proyecto con Maven
-      # Genera el .war en app/target/
-      # Este paso es OBLIGATORIO para Java —
-      # sin él el autopackager solo encuentra JS
-      - name: Build con Maven
-        working-directory: ./app
-        run: mvn -B clean package --file pom.xml -DskipTests
-
-      # Paso 4: Verifica que el .war fue generado
-      - name: Verificar build
-        run: |
-          echo '[INFO] Artefactos generados por Maven:'
-          find ./app/target -name "*.war" -o -name "*.jar" | head -20
-
-      # Paso 5: Instala el Veracode CLI
-      # Incluye el autopackager que detecta y empaqueta
-      # correctamente el artefacto para Veracode
+      # Paso 3: Instala el Veracode CLI
+      # Incluye el autopackager con soporte para múltiples lenguajes:
+      # Java (Maven/Gradle), .NET, JS, Python, Go, Ruby, PHP, SQL, etc.
       - name: Instalar Veracode CLI
         run: |
           echo '[INFO] Descargando Veracode CLI...'
@@ -80,10 +66,9 @@ jobs:
           ./veracode version
           echo '[INFO] Veracode CLI instalado correctamente.'
 
-      # Paso 6: Diagnóstico del proyecto
-      # Detecta los toolchains disponibles
-      # Ahora que el .war existe, detectará Java/Maven
-      # Genera o actualiza veracode.yml con los módulos
+      # Paso 4: Diagnóstico del proyecto
+      # Detecta los toolchains disponibles en el repositorio
+      # Genera o actualiza veracode.yml con los módulos detectados
       # SIEMPRE ejecutar antes de veracode package
       - name: Veracode Package Discover
         run: |
@@ -91,12 +76,14 @@ jobs:
           ./veracode package discover
           echo '[INFO] Diagnóstico completado.'
 
-      # Paso 7: Empaqueta el proyecto con el autopackager
-      # Con el .war ya compilado, el autopackager detecta
-      # correctamente Java y genera el artefacto para Veracode
+      # Paso 5: Empaqueta el proyecto automáticamente
       # --source .: empaqueta desde el directorio raíz
       # --trust: confirma que el código es de confianza
-      # --output ./dist: carpeta de salida del artefacto
+      # --output ./dist: carpeta de salida de artefactos
+      # --verbose: muestra detalles del proceso
+      # Para Java genera: verademo.war (26.8MB)
+      # Para JS genera: veracode-auto-pack-{proyecto}-js-no-pm.zip
+      # Para SQL genera: veracode-auto-pack-{proyecto}-sql.zip
       - name: Veracode Autopackage
         run: |
           echo '[INFO] Empaquetando proyecto...'
@@ -108,32 +95,35 @@ jobs:
           echo '[INFO] Artefactos generados por el autopackager:'
           ls -la ./dist/
 
-      # Paso 8: Sube el artefacto para el job de scan
-      # El autopackager genera nombres tipo:
-      # veracode-auto-pack-{proyecto}-{lenguaje}.zip
-      - name: Subir artefacto
+      # Paso 6: Sube los artefactos para el job de scan
+      # Sube el .war de Java y los .zip de otros lenguajes
+      # El job veracode-scan los descargará en el siguiente job
+      - name: Subir artefactos
         uses: actions/upload-artifact@v4
         with:
           name: veracode-autopack-artifact
-          path: ./dist/*.zip
+          path: |
+            ./dist/verademo.war
+            ./dist/*.zip
 
   # ══════════════════════════════════════════
   # JOB 2: VERACODE PIPELINE SCAN
-  # Descarga el artefacto autoempaquetado
-  # y lo envía a Veracode para análisis SAST
+  # Descarga los artefactos y los envía a Veracode
+  # Prioriza .war para proyectos Java
+  # Si no hay .war busca el .zip del autopackager
   # ══════════════════════════════════════════
   veracode-scan:
     needs: autopackage                # Espera que autopackage termine
     runs-on: ubuntu-latest
 
     steps:
-      # Paso 1: Descarga el artefacto del job anterior
-      - name: Descargar artefacto
+      # Paso 1: Descarga los artefactos del job anterior
+      - name: Descargar artefactos
         uses: actions/download-artifact@v4
         with:
           name: veracode-autopack-artifact
 
-      # Paso 2: Lista los archivos descargados
+      # Paso 2: Lista archivos descargados para diagnóstico
       - name: Listar archivos descargados
         run: |
           echo '[INFO] Archivos disponibles para escanear:'
@@ -148,10 +138,10 @@ jobs:
           distribution: 'temurin'
 
       # Paso 4: Ejecuta el Pipeline Scan de Veracode
+      # Prioriza .war sobre .zip para proyectos Java
+      # Si existe .war lo usa — si no, busca el .zip del autopackager
       # --fail_on_severity: bloquea el pipeline si encuentra
       #   Very High o High — quitar esta línea para modo pasivo
-      # --json_output_file: guarda todos los findings
-      # --filtered_json_output_file: solo los que violan política
       - name: Veracode Pipeline Scan
         env:
           VID: ${{ secrets.VID }}     # API ID de Veracode
@@ -161,27 +151,36 @@ jobs:
           curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
           unzip pipeline-scan-LATEST.zip
 
-          # Listar ZIPs disponibles para diagnóstico
-          echo '[INFO] Archivos ZIP disponibles:'
-          ls -la *.zip
+          echo '[INFO] Archivos disponibles:'
+          ls -la
 
-          # Detectar el ZIP del artefacto — excluye pipeline-scan-LATEST.zip
-          ZIP_FILE=$(ls *.zip | grep -v "pipeline-scan" | head -1)
+          # Detectar el artefacto a escanear
+          # Prioridad 1: .war (Java compilado — más completo para SAST)
+          # Prioridad 2: .zip del autopackager (otros lenguajes)
+          if ls *.war 1>/dev/null 2>&1; then
+            SCAN_FILE=$(ls *.war | head -1)
+            echo "[INFO] Artefacto Java WAR detectado: $SCAN_FILE"
+          else
+            SCAN_FILE=$(ls *.zip | grep -v "pipeline-scan" | head -1)
+            echo "[INFO] Artefacto ZIP detectado: $SCAN_FILE"
+          fi
 
-          # Validar que se encontró el artefacto
-          if [ -z "$ZIP_FILE" ]; then
-            echo '[ERROR] No se encontró artefacto ZIP para escanear'
-            echo '[ERROR] Verificar que el job autopackage generó el artefacto'
+          # Validar que se encontró un artefacto antes de escanear
+          if [ -z "$SCAN_FILE" ]; then
+            echo '[ERROR] No se encontró artefacto para escanear'
+            echo '[ERROR] Verificar que el job autopackage generó artefactos'
             exit 1
           fi
 
-          echo "[INFO] Artefacto a escanear: $ZIP_FILE"
+          echo "[INFO] Escaneando: $SCAN_FILE"
 
           echo '[INFO] Ejecutando Pipeline Scan...'
+          # --json_output_file: guarda todos los findings
+          # --filtered_json_output_file: solo los que violan la política
           java -jar pipeline-scan.jar \
             -vid "$VID" \
             -vkey "$VKEY" \
-            --file "$ZIP_FILE" \
+            --file "$SCAN_FILE" \
             --project_name "$GITHUB_REPOSITORY" \
             --project_url "https://github.com/$GITHUB_REPOSITORY" \
             --fail_on_severity "Very High, High" \
@@ -192,9 +191,16 @@ jobs:
           ls -la *.json || echo '[WARN] No se generaron archivos JSON'
           echo '[INFO] Pipeline Scan completado.'
 
+          # ─────────────────────────────────────────
+          # CÓDIGOS DE SALIDA (EXIT CODES):
+          # 0  → Sin findings bloqueantes → pipeline continúa ✅
+          # 16 → N findings bloqueantes encontrados → pipeline falla ❌
+          # 1  → Error de configuración o autenticación ❌
+          # ─────────────────────────────────────────
+
       # Paso 5: Guarda resultados como artefacto descargable
       # if: always() garantiza guardado aunque el scan falle
-      # results.json: todos los findings
+      # results.json: todos los findings encontrados
       # filtered_results.json: solo los que violan la política
       - name: Guardar resultados del scan
         uses: actions/upload-artifact@v4
