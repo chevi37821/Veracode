@@ -23,6 +23,14 @@ permissions:
   contents: read
   pull-requests: read
 
+# ─────────────────────────────────────────────
+# FIX: Permite Node.js 20 en las actions
+# GitHub forzará Node.js 24 desde septiembre 2026
+# Quitar esta línea cuando las actions se actualicen
+# ─────────────────────────────────────────────
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
 jobs:
 
   # ══════════════════════════════════════════
@@ -127,13 +135,25 @@ jobs:
           curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
           unzip pipeline-scan-LATEST.zip
 
-          # Detecta el nombre del ZIP generado por el autopackager
-          # El autopackager genera nombres tipo:
-          # veracode-auto-pack-{proyecto}-{lenguaje}.zip
-          ZIP_FILE=$(ls *.zip | grep -v pipeline-scan || ls *.zip | head -1)
+          # Verificar qué archivos ZIP están disponibles
+          echo '[INFO] Archivos ZIP disponibles:'
+          ls -la *.zip
+
+          # Detecta el ZIP del artefacto — excluye pipeline-scan-LATEST.zip
+          ZIP_FILE=$(ls *.zip | grep -v "pipeline-scan" | head -1)
+
+          # Validar que se encontró el artefacto antes de escanear
+          if [ -z "$ZIP_FILE" ]; then
+            echo '[ERROR] No se encontró artefacto ZIP para escanear'
+            echo '[ERROR] Verificar que el job autopackage generó el artefacto'
+            exit 1
+          fi
+
           echo "[INFO] Artefacto a escanear: $ZIP_FILE"
 
           echo '[INFO] Ejecutando Pipeline Scan...'
+          # SIN || true para ver errores reales del scan
+          # Si el scan falla el pipeline falla — comportamiento correcto
           java -jar pipeline-scan.jar \
             -vid "$VID" \
             -vkey "$VKEY" \
@@ -142,7 +162,7 @@ jobs:
             --project_url "https://github.com/$GITHUB_REPOSITORY" \
             --fail_on_severity "Very High, High" \
             --json_output_file results.json \
-            --filtered_json_output_file filtered_results.json || true
+            --filtered_json_output_file filtered_results.json
 
           echo '[INFO] Verificando archivos generados...'
           ls -la *.json || echo '[WARN] No se generaron archivos JSON'
