@@ -152,7 +152,7 @@ jobs:
       - name: Veracode Upload and Scan
         uses: veracode/veracode-uploadandscan-action@master
         with:
-          appname: 'Verademo-GitHub-andreani'  # Nombre del perfil en Veracode Platform
+          appname: 'Verademo-GitHub-autopackage'  # Nombre del perfil en Veracode Platform
                                                # Si no existe se crea automáticamente
           createprofile: true                  # true = crear perfil si no existe
           filepath: ${{ steps.detect.outputs.SCAN_FILE }}  # Artefacto detectado dinámicamente
