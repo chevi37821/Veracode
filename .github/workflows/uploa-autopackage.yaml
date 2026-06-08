@@ -9,7 +9,7 @@
 # Veracode Platform → My Portfolio → Applications
 # ============================================================
 
-name: Veracode Policy Scan Actuali
+name: Veracode Policy Scan + autopackage
 
 # ─────────────────────────────────────────────
 # TRIGGERS — Cuándo se ejecuta este workflow
