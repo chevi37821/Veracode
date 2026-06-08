@@ -2,7 +2,7 @@
 # VERACODE PIPELINE SCAN + FIX — GitHub Actions
 # Escaneo SAST + guardado de resultados + fixes automáticos con IA
 # ============================================================
-
+#sin autopackager
 name: Veracode Pipeline Scan
 
 # ─────────────────────────────────────────────
